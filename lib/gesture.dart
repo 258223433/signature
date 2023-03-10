@@ -35,7 +35,7 @@ class GestureManager {
 
     if (details.pointerCount == 2 && activeGestureType == GestureType.scale) {
       //双指
-      state.customSetState(() {
+      state.draw(() {
         state.widget.controller.scaleUpdate = details.scale;
         state.widget.controller.translation += details.focalPointDelta;
         // state.widget.controller.translation += details.focalPointDelta +

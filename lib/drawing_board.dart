@@ -75,8 +75,8 @@ class DrawingBoardState extends State<DrawingBoard> {
     gestureManager = GestureManager(this);
   }
 
-  ///外部调用setState
-  void customSetState(VoidCallback fn) {
+  ///绘制一帧
+  void draw(VoidCallback fn) {
     setState(fn);
   }
 
