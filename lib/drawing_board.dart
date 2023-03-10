@@ -6,13 +6,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart' as svg;
 import 'package:image/image.dart' as img;
+import 'package:signature/gesture.dart';
 
 /// signature canvas. Controller is required, other parameters are optional.
 /// widget/canvas expands to maximum by default.
 /// this behaviour can be overridden using width and/or height parameters.
-class Signature extends StatefulWidget {
+class DrawingBoard extends StatefulWidget {
   /// constructor
-  const Signature({
+  const DrawingBoard({
     required this.controller,
     Key? key,
     this.backgroundColor = Colors.grey,
@@ -22,7 +23,7 @@ class Signature extends StatefulWidget {
   }) : super(key: key);
 
   /// signature widget controller
-  final SignatureController controller;
+  final DrawingBoardController controller;
 
   /// signature widget width
   final double? width;
@@ -37,17 +38,23 @@ class Signature extends StatefulWidget {
   final bool dynamicPressureSupported;
 
   @override
-  State createState() => SignatureState();
+  State createState() => DrawingBoardState();
 }
 
 /// signature widget state
-class SignatureState extends State<Signature> {
+class DrawingBoardState extends State<DrawingBoard> {
   /// Helper variable indicating that user has left the canvas so we can prevent linking next point
   /// with straight line.
   bool _isOutsideDrawField = false;
 
   /// Active pointer to prevent multitouch drawing
   int? activePointerId;
+
+  ///当前手势类型
+  GestureType? activeGestureType;
+
+  ///平移开始点
+  ScaleStartDetails? panStartDetails;
 
   /// Real widget size
   Size? screenSize;
@@ -58,62 +65,43 @@ class SignatureState extends State<Signature> {
   /// Max height of canvas
   late double maxHeight;
 
+  /// 手势管理器
+  late GestureManager gestureManager;
+
   @override
   void initState() {
     super.initState();
     _updateWidgetSize();
+    gestureManager = GestureManager(this);
+  }
+
+  ///外部调用setState
+  void customSetState(VoidCallback fn) {
+    setState(fn);
   }
 
   @override
   Widget build(BuildContext context) {
-    final GestureDetector signatureCanvas = GestureDetector(
-      onVerticalDragUpdate: (DragUpdateDetails details) {
-        //NO-OP
-      },
-      child: Container(
-        decoration: BoxDecoration(color: widget.backgroundColor),
-        child: Listener(
-            onPointerDown: (PointerDownEvent event) {
-              if (activePointerId == null || activePointerId == event.pointer) {
-                activePointerId = event.pointer;
-                widget.controller.onDrawStart?.call();
-                _addPoint(event, PointType.tap);
-              }
-            },
-            onPointerUp: (PointerUpEvent event) {
-              if (activePointerId == event.pointer) {
-                _addPoint(event, PointType.tap);
-                widget.controller.pushCurrentStateToUndoStack();
-                widget.controller.onDrawEnd?.call();
-                activePointerId = null;
-              }
-            },
-            onPointerCancel: (PointerCancelEvent event) {
-              if (activePointerId == event.pointer) {
-                _addPoint(event, PointType.tap);
-                widget.controller.pushCurrentStateToUndoStack();
-                widget.controller.onDrawEnd?.call();
-                activePointerId = null;
-              }
-            },
-            onPointerMove: (PointerMoveEvent event) {
-              if (activePointerId == event.pointer) {
-                _addPoint(event, PointType.move);
-                widget.controller.onDrawMove?.call();
-              }
-            },
-            child: RepaintBoundary(
-              child: CustomPaint(
-                painter: _SignaturePainter(widget.controller),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                      minWidth: maxWidth,
-                      minHeight: maxHeight,
-                      maxWidth: maxWidth,
-                      maxHeight: maxHeight),
-                ),
+    final Container signatureCanvas = Container(
+      decoration: BoxDecoration(color: widget.backgroundColor),
+      child: Listener(
+        child: GestureDetector(
+          onScaleStart: gestureManager.onScaleStart,
+          onScaleUpdate: gestureManager.onScaleUpdate,
+          onScaleEnd: gestureManager.onScaleEnd,
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: _SignaturePainter(widget.controller),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                    minWidth: maxWidth,
+                    minHeight: maxHeight,
+                    maxWidth: maxWidth,
+                    maxHeight: maxHeight),
               ),
-            )),
+            ),
+          ),
+        ),
       ),
     );
 
@@ -133,7 +121,7 @@ class SignatureState extends State<Signature> {
   }
 
   @override
-  void didUpdateWidget(covariant Signature oldWidget) {
+  void didUpdateWidget(covariant DrawingBoard oldWidget) {
     super.didUpdateWidget(oldWidget);
     _updateWidgetSize();
   }
@@ -143,19 +131,30 @@ class SignatureState extends State<Signature> {
     maxHeight = widget.height ?? double.infinity;
   }
 
+  void _updateControllerSize() {
+    widget.controller.width =
+        maxWidth == double.infinity ? screenSize!.width : maxWidth;
+    widget.controller.height =
+        maxHeight == double.infinity ? screenSize!.height : maxHeight;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     screenSize = MediaQuery.of(context).size;
+    _updateControllerSize();
+    Path().computeMetrics();
   }
 
-  void _addPoint(PointerEvent event, PointType type) {
-    final Offset o = event.localPosition;
+  void addPoint(Offset o, PointType type) {
+    // final Offset o = event.localPosition;
 
     // IF WIDGET IS USED WITHOUT DIMENSIONS, WE WILL FALLBACK TO SCREENSIZE
     // DIMENSIONS
-    final double _maxSafeWidth = maxWidth == double.infinity ? screenSize!.width : maxWidth;
-    final double _maxSafeHeight = maxHeight == double.infinity ? screenSize!.height : maxHeight;
+    final double _maxSafeWidth =
+        maxWidth == double.infinity ? screenSize!.width : maxWidth;
+    final double _maxSafeHeight =
+        maxHeight == double.infinity ? screenSize!.height : maxHeight;
 
     //SAVE POINT ONLY IF IT IS IN THE SPECIFIED BOUNDARIES
     if ((screenSize?.width == null || o.dx > 0 && o.dx < _maxSafeWidth) &&
@@ -173,7 +172,9 @@ class SignatureState extends State<Signature> {
         widget.controller.addPoint(Point(
           o,
           t,
-          widget.dynamicPressureSupported ? event.pressure : 1.0,
+          // 1.0,
+          widget.dynamicPressureSupported ? 1.0 : 1.0,
+          // widget.dynamicPressureSupported ? event.pressure : 1.0,
         ));
       });
     } else {
@@ -219,7 +220,7 @@ class _SignaturePainter extends CustomPainter {
       ..strokeJoin = _controller.strokeJoin;
   }
 
-  final SignatureController _controller;
+  final DrawingBoardController _controller;
   final Paint _penStyle;
 
   @override
@@ -232,13 +233,14 @@ class _SignaturePainter extends CustomPainter {
       if (points[i + 1].type == PointType.move) {
         _penStyle.strokeWidth *= points[i].pressure;
         canvas.drawLine(
-          points[i].offset,
-          points[i + 1].offset,
+          points[i].offset * _controller.currentScale + _controller.translation,
+          points[i + 1].offset * _controller.currentScale +
+              _controller.translation,
           _penStyle,
         );
       } else {
         canvas.drawCircle(
-          points[i].offset,
+          points[i].offset * _controller.currentScale + _controller.translation,
           (_penStyle.strokeWidth / 2) * points[i].pressure,
           _penStyle,
         );
@@ -253,23 +255,43 @@ class _SignaturePainter extends CustomPainter {
 /// class for interaction with signature widget
 /// manages points representing signature on canvas
 /// provides signature manipulation functions (export, clear)
-class SignatureController extends ValueNotifier<List<Point>> {
+class DrawingBoardController extends ValueNotifier<List<Point>> {
   /// constructor
-  SignatureController({
+  DrawingBoardController({
     List<Point>? points,
     this.penColor = Colors.black,
-    this.strokeCap = StrokeCap.butt,
-    this.strokeJoin = StrokeJoin.miter,
+    this.strokeCap = StrokeCap.round,
+    this.strokeJoin = StrokeJoin.round,
     this.penStrokeWidth = 3.0,
     this.exportBackgroundColor,
     this.exportPenColor,
-    this.onDrawStart,
+    // this.onDrawStart,
     this.onDrawMove,
     this.onDrawEnd,
+    this.scale = 1.0,
+    this.translation = Offset.zero,
   }) : super(points ?? <Point>[]);
 
   /// color of a signature line
   final Color penColor;
+
+  ///宽度
+  double width = 0.0;
+
+  ///高度
+  double height = 0.0;
+
+  ///scale
+  double scale;
+
+  ///更新中的scale
+  double scaleUpdate = 1.0;
+
+  ///平移
+  Offset translation;
+
+  ///当前缩放
+  double get currentScale => scale * scaleUpdate;
 
   /// boldness of a signature line
   final double penStrokeWidth;
@@ -287,7 +309,7 @@ class SignatureController extends ValueNotifier<List<Point>> {
   final Color? exportPenColor;
 
   /// callback to notify when drawing has started
-  VoidCallback? onDrawStart;
+  // VoidCallback? onDrawStart;
 
   /// callback to notify when the pointer was moved while drawing.
   VoidCallback? onDrawMove;
@@ -331,27 +353,33 @@ class SignatureController extends ValueNotifier<List<Point>> {
 
   /// The biggest x value for all points.
   /// Will return `null` if there are no points.
-  double? get maxXValue => isEmpty ? null : points.map((Point p) => p.offset.dx).reduce(max);
+  double? get maxXValue =>
+      isEmpty ? null : points.map((Point p) => p.offset.dx).reduce(max);
 
   /// The biggest y value for all points.
   /// Will return `null` if there are no points.
-  double? get maxYValue => isEmpty ? null : points.map((Point p) => p.offset.dy).reduce(max);
+  double? get maxYValue =>
+      isEmpty ? null : points.map((Point p) => p.offset.dy).reduce(max);
 
   /// The smallest x value for all points.
   /// Will return `null` if there are no points.
-  double? get minXValue => isEmpty ? null : points.map((Point p) => p.offset.dx).reduce(min);
+  double? get minXValue =>
+      isEmpty ? null : points.map((Point p) => p.offset.dx).reduce(min);
 
   /// The smallest y value for all points.
   /// Will return `null` if there are no points.
-  double? get minYValue => isEmpty ? null : points.map((Point p) => p.offset.dy).reduce(min);
+  double? get minYValue =>
+      isEmpty ? null : points.map((Point p) => p.offset.dy).reduce(min);
 
   /// Calculates a default height based on existing points.
   /// Will return `null` if there are no points.
-  int? get defaultHeight => isEmpty ? null : (maxYValue! - minYValue! + penStrokeWidth * 2).toInt();
+  int? get defaultHeight =>
+      isEmpty ? null : (maxYValue! - minYValue! + penStrokeWidth * 2).toInt();
 
   /// Calculates a default width based on existing points.
   /// Will return `null` if there are no points.
-  int? get defaultWidth => isEmpty ? null : (maxXValue! - minXValue! + penStrokeWidth * 2).toInt();
+  int? get defaultWidth =>
+      isEmpty ? null : (maxXValue! - minXValue! + penStrokeWidth * 2).toInt();
 
   /// Calculates a default width based on existing points.
   /// Will return `null` if there are no points.
@@ -412,7 +440,8 @@ class SignatureController extends ValueNotifier<List<Point>> {
 
     final ui.PictureRecorder recorder = ui.PictureRecorder();
     final ui.Canvas canvas = Canvas(recorder)
-      ..translate(-(minXValue! - penStrokeWidth), -(minYValue! - penStrokeWidth));
+      ..translate(
+          -(minXValue! - penStrokeWidth), -(minYValue! - penStrokeWidth));
     if (exportBackgroundColor != null) {
       final ui.Paint paint = Paint()..color = exportBackgroundColor!;
       canvas.drawPaint(paint);
@@ -502,11 +531,13 @@ class SignatureController extends ValueNotifier<List<Point>> {
     final int canvasHeight = height ?? defaultHeight!;
 
     // create the image with the given size
-    final img.Image signatureImage = img.Image(width: canvasWidth, height: canvasHeight);
+    final img.Image signatureImage =
+        img.Image(width: canvasWidth, height: canvasHeight);
     // set the image background color
     img.fill(signatureImage, color: bColor);
 
-    final double xOffset = ((width ?? defaultWidth!) - defaultWidth!).toDouble() / 2;
+    final double xOffset =
+        ((width ?? defaultWidth!) - defaultWidth!).toDouble() / 2;
     final double yOffset =
         ((height ?? defaultHeight!) - defaultHeight!).toDouble() / 2;
 
@@ -514,8 +545,7 @@ class SignatureController extends ValueNotifier<List<Point>> {
     // it uses the same logic as the CustomPainter Paint function
     for (int i = 0; i < translatedPoints.length - 1; i++) {
       if (translatedPoints[i + 1].type == PointType.move) {
-        img.drawLine(
-            signatureImage,
+        img.drawLine(signatureImage,
             x1: (translatedPoints[i].offset.dx + xOffset).toInt(),
             y1: (translatedPoints[i].offset.dy + yOffset).toInt(),
             x2: (translatedPoints[i + 1].offset.dx + xOffset).toInt(),
@@ -544,7 +574,8 @@ class SignatureController extends ValueNotifier<List<Point>> {
       return null;
     }
 
-    String colorToHex(Color c) => '#${c.value.toRadixString(16).padLeft(8, '0')}';
+    String colorToHex(Color c) =>
+        '#${c.value.toRadixString(16).padLeft(8, '0')}';
 
     String formatPoint(Point p) =>
         '${p.offset.dx.toStringAsFixed(2)},${p.offset.dy.toStringAsFixed(2)}';
@@ -569,6 +600,7 @@ class SignatureController extends ValueNotifier<List<Point>> {
 
   /// Export the current content to a SVG graphic.
   /// Will return `null` if there are no points.
-  svg.SvgPicture? toSVG({int? width, int? height}) =>
-      isEmpty ? null : svg.SvgPicture.string(toRawSVG(width: width, height: height)!);
+  svg.SvgPicture? toSVG({int? width, int? height}) => isEmpty
+      ? null
+      : svg.SvgPicture.string(toRawSVG(width: width, height: height)!);
 }

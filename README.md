@@ -38,7 +38,7 @@ Take a look at our example project as well: [Signature Demo](https://github.com/
 
 ```dart
 // IMPORT PACKAGE
-import 'package:signature/signature.dart';
+import 'package:signature/drawing_board.dart';
 
 // Initialise a controller. It will contains signature points, stroke width and pen color.
 // It will allow you to interact with the widget
@@ -57,15 +57,15 @@ var _signatureCanvas = Signature(
 );
 
 // CLEAR CANVAS
-_controller.clear();
+_controller.clear()
 
 // EXPORT BYTES AS PNG
 // The exported image will be limited to the drawn area
-_controller.toPngBytes();
+_controller.toPngBytes()
 
 // isEmpty/isNotEmpty CAN BE USED TO CHECK IF SIGNATURE HAS BEEN PROVIDED
-_controller.isNotEmpty; //true if signature has been provided
-_controller.isEmpty; //true if signature has NOT been provided
+_controller.isNotEmpty //true if signature has been provided
+_controller.isEmpty //true if signature has NOT been provided
 
 // EXPORT POINTS (2D POINTS ROUGHLY REPRESENTING WHAT IS VISIBLE ON CANVAS)
 var exportedPoints = _controller.points;
